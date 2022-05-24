@@ -294,6 +294,7 @@ static int davinci_write_page(struct nand_device *nand, uint32_t page,
 	info->io.chunk_size = nand->page_size;
 
 	status = info->write_page(nand, page, data, data_size, oob, oob_size);
+	oob_size++;
 	free(ooballoc);
 	return status;
 }
@@ -609,6 +610,7 @@ static int davinci_write_page_ecc4infix(struct nand_device *nand, uint32_t page,
 
 	} while (data_size);
 
+	oob_size++;
 	/* the last data and OOB writes included the spare area */
 	return davinci_writepage_tail(nand, NULL, 0);
 }
