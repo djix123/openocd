@@ -105,6 +105,7 @@ extern struct target_type hla_target;
 extern struct target_type nds32_v2_target;
 extern struct target_type nds32_v3_target;
 extern struct target_type nds32_v3m_target;
+extern struct target_type esp32s2_target;
 extern struct target_type or1k_target;
 extern struct target_type quark_x10xx_target;
 extern struct target_type quark_d20xx_target;
@@ -141,6 +142,7 @@ static struct target_type *target_types[] = {
 	&nds32_v2_target,
 	&nds32_v3_target,
 	&nds32_v3m_target,
+	&esp32s2_target,
 	&or1k_target,
 	&quark_x10xx_target,
 	&quark_d20xx_target,
@@ -2590,7 +2592,7 @@ int target_blank_check_memory(struct target *target,
 	}
 
 	if (!target->type->blank_check_memory)
-		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
+		return ERROR_NOT_IMPLEMENTED;
 
 	return target->type->blank_check_memory(target, blocks, num_blocks, erased_value);
 }
@@ -6444,6 +6446,7 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 	int i;
 	const char *targetname;
 	int retval, len;
+	static int smp_group = 1;
 	struct target *target = NULL;
 	struct target_list *head, *new;
 
@@ -6475,9 +6478,10 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 	/*  now parse the list of cpu and put the target in smp mode*/
 	foreach_smp_target(head, lh) {
 		target = head->target;
-		target->smp = 1;
+		target->smp = smp_group;
 		target->smp_targets = lh;
 	}
+	smp_group++;
 
 	if (target && target->rtos)
 		retval = rtos_smp_init(target);
