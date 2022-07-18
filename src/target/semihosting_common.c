@@ -103,16 +103,6 @@ static int semihosting_common_fileio_info(struct target *target,
 static int semihosting_common_fileio_end(struct target *target, int result,
 	int fileio_errno, bool ctrl_c);
 
-static int semihosting_read_fields(struct target *target, size_t number,
-	uint8_t *fields);
-static int semihosting_write_fields(struct target *target, size_t number,
-	uint8_t *fields);
-static uint64_t semihosting_get_field(struct target *target, size_t index,
-	uint8_t *fields);
-static void semihosting_set_field(struct target *target, uint64_t value,
-	size_t index,
-	uint8_t *fields);
-
 /* Attempts to include gdb_server.h failed. */
 extern int gdb_actual_connections;
 
@@ -166,6 +156,7 @@ int semihosting_common_init(struct target *target, void *setup,
 
 	semihosting->setup = setup;
 	semihosting->post_result = post_result;
+	semihosting->user_command_extension = NULL;
 
 	target->semihosting = semihosting;
 
@@ -1467,9 +1458,14 @@ int semihosting_common(struct target *target)
 			 * Return
 			 * On exit, the RETURN REGISTER contains the return status.
 			 */
-		{
-			assert(!semihosting_user_op_params);
+			if (semihosting->user_command_extension) {
+				retval = semihosting->user_command_extension(target);
+				if (retval != ERROR_NOT_IMPLEMENTED)
+					break;
+				/* If custom user command not handled, we are looking for the TCL handler */
+			}
 
+			assert(!semihosting_user_op_params);
 			retval = semihosting_read_fields(target, 2, fields);
 			if (retval != ERROR_OK) {
 				LOG_ERROR("Failed to read fields for user defined command"
@@ -1507,11 +1503,8 @@ int semihosting_common(struct target *target)
 			target_handle_event(target, semihosting->op);
 			free(semihosting_user_op_params);
 			semihosting_user_op_params = NULL;
-
 			semihosting->result = 0;
 			break;
-		}
-
 
 		case SEMIHOSTING_SYS_ELAPSED:	/* 0x30 */
 		/*
@@ -1648,17 +1641,11 @@ static int semihosting_common_fileio_end(struct target *target, int result,
 	 */
 	switch (semihosting->op) {
 		case SEMIHOSTING_SYS_WRITE:	/* 0x05 */
-			if (result < 0)
-				semihosting->result = fileio_info->param_3;
-			else
-				semihosting->result = 0;
-			break;
-
 		case SEMIHOSTING_SYS_READ:	/* 0x06 */
-			if (result == (int)fileio_info->param_3)
-				semihosting->result = 0;
-			if (result <= 0)
-				semihosting->result = fileio_info->param_3;
+			if (result < 0)
+				semihosting->result = fileio_info->param_3;  /* Zero bytes read/written. */
+			else
+				semihosting->result = (int64_t)fileio_info->param_3 - result;
 			break;
 
 		case SEMIHOSTING_SYS_SEEK:	/* 0x0a */
@@ -1670,10 +1657,13 @@ static int semihosting_common_fileio_end(struct target *target, int result,
 	return semihosting->post_result(target);
 }
 
+/* -------------------------------------------------------------------------
+ * Utility functions. */
+
 /**
  * Read all fields of a command from target to buffer.
  */
-static int semihosting_read_fields(struct target *target, size_t number,
+int semihosting_read_fields(struct target *target, size_t number,
 	uint8_t *fields)
 {
 	struct semihosting *semihosting = target->semihosting;
@@ -1685,7 +1675,7 @@ static int semihosting_read_fields(struct target *target, size_t number,
 /**
  * Write all fields of a command from buffer to target.
  */
-static int semihosting_write_fields(struct target *target, size_t number,
+int semihosting_write_fields(struct target *target, size_t number,
 	uint8_t *fields)
 {
 	struct semihosting *semihosting = target->semihosting;
@@ -1697,7 +1687,7 @@ static int semihosting_write_fields(struct target *target, size_t number,
 /**
  * Extract a field from the buffer, considering register size and endianness.
  */
-static uint64_t semihosting_get_field(struct target *target, size_t index,
+uint64_t semihosting_get_field(struct target *target, size_t index,
 	uint8_t *fields)
 {
 	struct semihosting *semihosting = target->semihosting;
@@ -1710,7 +1700,7 @@ static uint64_t semihosting_get_field(struct target *target, size_t index,
 /**
  * Store a field in the buffer, considering register size and endianness.
  */
-static void semihosting_set_field(struct target *target, uint64_t value,
+void semihosting_set_field(struct target *target, uint64_t value,
 	size_t index,
 	uint8_t *fields)
 {
@@ -1834,7 +1824,7 @@ COMMAND_HANDLER(handle_common_semihosting_redirect_command)
 {
 	struct target *target = get_current_target(CMD_CTX);
 
-	if (target == NULL) {
+	if (!target) {
 		LOG_ERROR("No target selected");
 		return ERROR_FAIL;
 	}
